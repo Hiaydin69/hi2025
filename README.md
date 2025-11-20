@@ -526,3 +526,566 @@
             if (animationId) cancelAnimationFrame(animationId);
             
             isGameOver = false;
+            score = 0;
+            bombs = MAX_BOMBS;
+            heals = MAX_HEALS;
+            fears = MAX_FEARS; 
+            difficultyLevel = 1;
+            gameTime = 0;
+            currentXP = 0;
+            playerLevel = 1;
+            player.maxHealth = 100; 
+            player.health = player.maxHealth;
+            player.x = W / 2; 
+            player.y = H / 2;
+            player.velocityX = 0; 
+            player.velocityY = 0; 
+            player.isBoosting = false;
+            boostCooldownTimer = 0;
+            enemies = [];
+            bullets = [];
+            particles = [];
+            lootItems = []; 
+            shockwaveEffect = null;
+            weaponLevel = 1;
+            currentWeapon = WEAPONS[0];
+            keys = {};
+
+            updateUI();
+            
+            if (spawnIntervalId) clearInterval(spawnIntervalId);
+            spawnIntervalId = setInterval(spawnEnemy, 1000 / (1 + difficultyLevel * 0.5)); // Zombi spawn etme aralığı
+            
+            startButton.textContent = "Oynuyor (WASD ile hareket et)";
+            startButton.disabled = true;
+
+            lastTime = performance.now();
+            animationId = requestAnimationFrame(update);
+        }
+        
+        /**
+         * Her 30 saniyede bir zorluğu artırır.
+         */
+        function increaseDifficulty() {
+            difficultyLevel++;
+            console.log("Zorluk seviyesi arttı: ", difficultyLevel);
+            clearInterval(spawnIntervalId);
+            spawnIntervalId = setInterval(spawnEnemy, 1000 / (1 + difficultyLevel * 0.5));
+        }
+
+        /**
+         * Bomba yeteneğini kullanır.
+         */
+        function useBomb() {
+            if (isGameOver || bombs <= 0) return;
+
+            bombs--;
+            
+            score += enemies.length * ZOMBIE_SCORE_VALUE; 
+            gainXP(enemies.length * ZOMBIE_XP_VALUE); 
+            enemies = [];
+            
+            canvas.style.opacity = 0.5;
+            setTimeout(() => {
+                 canvas.style.opacity = 1;
+            }, 300);
+        }
+        
+        /**
+         * Can doldurma yeteneğini kullanır.
+         */
+        function useHeal() {
+            if (isGameOver || heals <= 0) return;
+
+            heals--;
+            player.health = player.maxHealth;
+        }
+
+        /**
+         * Korku yeteneğini kullanır.
+         */
+        function useFear() {
+            if (isGameOver || fears <= 0) return;
+
+            fears--;
+
+            enemies.forEach(enemy => {
+                enemy.fearTimer = FEAR_DURATION;
+            });
+        }
+        
+        /**
+         * Silah yükseltmesi yapar.
+         */
+        function upgradeWeapon() {
+            const nextLevel = weaponLevel + 1;
+            if (nextLevel > WEAPONS.length) {
+                return;
+            }
+
+            const nextWeapon = WEAPONS[weaponLevel]; 
+            if (score >= nextWeapon.cost) {
+                score -= nextWeapon.cost;
+                weaponLevel = nextLevel;
+                currentWeapon = nextWeapon;
+            }
+        }
+        
+        /**
+         * Loot paketlerini toplama işlevini kontrol eder.
+         */
+        function collectLoot(loot, lIndex) {
+            if (loot.type === 'health') {
+                player.health = Math.min(player.maxHealth, player.health + 25);
+            } else if (loot.type === 'bomb') {
+                bombs = Math.min(MAX_BOMBS, bombs + 1);
+            } else if (loot.type === 'heal') {
+                heals = Math.min(MAX_HEALS, heals + 1);
+            }
+            
+            // Not: Loot dizisinden silme işlemi update döngüsünde ters döngü ile yapılıyor.
+        }
+
+        function dropLoot(x, y) {
+            const rand = Math.random();
+            if (rand < 0.3) { 
+                const itemRand = Math.random();
+                let type;
+                if (itemRand < 0.6) { 
+                    type = 'health';
+                } else if (itemRand < 0.8) { 
+                    type = 'bomb';
+                } else { 
+                    type = 'heal';
+                }
+                lootItems.push(new Loot(x, y, type));
+            }
+        }
+        
+        /**
+         * Kullanıcı arayüzünü (HTML/CSS) günceller.
+         */
+        function updateUI() {
+            // HTML güncellemeleri (Sadece Bilgi Paneli için)
+            
+            weaponLevelDisplay.textContent = weaponLevel;
+            currentWeaponNameDisplay.textContent = currentWeapon.name;
+            weaponDamageDisplay.textContent = currentWeapon.damage;
+            weaponRateDisplay.textContent = currentWeapon.rate < 200 ? 'Hızlı' : (currentWeapon.rate < 600 ? 'Orta' : 'Yavaş');
+            
+            // Yükseltme butonu HTML'den kaldırıldığı için burası basitleştirildi.
+        }
+        
+        /**
+         * Skill ikonlarını çizer.
+         */
+        function drawSkillIcon(x, y, count, key, symbol, disabled) {
+            const size = 45;
+            
+            ctx.fillStyle = disabled ? 'rgba(35, 35, 64, 0.5)' : '#232340';
+            ctx.strokeStyle = disabled ? '#5a5a7d55' : '#5a5a7d';
+            ctx.lineWidth = 2;
+            
+            ctx.fillRect(x, y, size, size);
+            ctx.strokeRect(x, y, size, size);
+
+            // İkon
+            ctx.font = '24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = disabled ? '#9ca3af' : 'white';
+            ctx.fillText(symbol, x + size / 2, y + size / 2 + 5);
+
+            // Sayaç
+            ctx.fillStyle = '#ff5722';
+            ctx.beginPath();
+            ctx.arc(x + size, y, 10, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.font = '12px Inter';
+            ctx.fillStyle = 'white';
+            ctx.fillText(count, x + size, y + 4);
+
+            // Tuş
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(x + size - 20, y + size - 15, 20, 15);
+            ctx.font = '10px Inter';
+            ctx.fillStyle = 'white';
+            ctx.fillText(key, x + size - 10, y + size - 4);
+            
+            ctx.textAlign = 'left';
+        }
+        
+        /**
+         * HUD (Heads-Up Display) öğelerini doğrudan Canvas üzerine çizer.
+         */
+        function drawHUD() {
+            
+            // 1. Can Barı (Sol Üst)
+            const healthBarWidth = 200;
+            const healthBarHeight = 15;
+            const healthRatio = player.health / player.maxHealth;
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(10, 10, healthBarWidth + 40, healthBarHeight + 10);
+            
+            ctx.fillStyle = 'gray';
+            ctx.fillRect(30, 15, healthBarWidth, healthBarHeight);
+            ctx.fillStyle = 'red';
+            ctx.fillRect(30, 15, healthBarWidth * healthRatio, healthBarHeight);
+
+            ctx.fillStyle = 'white';
+            ctx.font = '14px Inter';
+            ctx.fillText(`CAN: ${Math.max(0, player.health)}/${player.maxHealth}`, 35, 28);
+            
+            // Kalp Simgesi (Ekstra)
+            ctx.font = '20px sans-serif';
+            ctx.fillText('❤️', 5, 30);
+            
+            
+            // 2. XP Barı (Sağ Üst)
+            const xpBarWidth = 250;
+            const xpBarHeight = 15;
+            const requiredXP = getRequiredXP(playerLevel);
+            const xpRatio = currentXP / requiredXP;
+            const xpX = W - xpBarWidth - 10;
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(xpX - 5, 10, xpBarWidth + 10, xpBarHeight + 10);
+            
+            ctx.fillStyle = '#232340';
+            ctx.fillRect(xpX, 15, xpBarWidth, xpBarHeight);
+
+            ctx.fillStyle = '#ff00ff'; // Mor XP dolgusu
+            ctx.fillRect(xpX, 15, xpBarWidth * xpRatio, xpBarHeight);
+
+            ctx.fillStyle = 'white';
+            ctx.font = '12px Inter';
+            ctx.textAlign = 'center';
+            ctx.fillText(`LVL ${playerLevel} - ${currentXP}/${requiredXP} XP`, xpX + xpBarWidth / 2, 28);
+            
+            
+            // 3. Skor (Orta Üst)
+            ctx.fillStyle = 'white';
+            ctx.font = '24px Inter';
+            ctx.textAlign = 'center';
+            ctx.fillText(`SKOR: ${score}`, W / 2, 30);
+            
+            // 4. Boost Barı (Sol Alt)
+            const boostBarWidth = 120;
+            const boostBarHeight = 15;
+            const boostX = 10;
+            const boostY = H - 25;
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(boostX, boostY - 5, boostBarWidth, boostBarHeight + 10);
+            
+            const boostRatio = boostCooldownTimer / BOOST_COOLDOWN;
+            const boostFill = boostCooldownTimer === 0 ? boostBarWidth : Math.max(0, boostBarWidth * (1 - boostRatio));
+            
+            ctx.fillStyle = '#0e7490';
+            ctx.fillRect(boostX, boostY, boostBarWidth, boostBarHeight);
+            
+            ctx.fillStyle = boostCooldownTimer === 0 ? '#38bdf8' : '#38bdf844';
+            ctx.fillRect(boostX, boostY, boostFill, boostBarHeight);
+            
+            ctx.fillStyle = 'white';
+            ctx.font = '10px Inter';
+            ctx.textAlign = 'center';
+            
+            const boostLabel = boostCooldownTimer === 0 ? `BOOST (Shift)` : `DOLUYOR... (${Math.ceil(boostCooldownTimer / 1000)}s)`;
+            ctx.fillText(boostLabel, boostX + boostBarWidth / 2, boostY + 11);
+            
+            
+            // 5. Silah Durumu ve Yükseltme (XP Barının Altı - Canvas)
+            const weaponBoxWidth = 250;
+            const weaponBoxHeight = 55;
+            const weaponX = W - weaponBoxWidth - 10;
+            const weaponY = 55; // XP barının 10px altına
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(weaponX, weaponY, weaponBoxWidth + 10, weaponBoxHeight + 10);
+            
+            // Silah Detayları
+            ctx.fillStyle = 'white';
+            ctx.font = '14px Inter';
+            ctx.textAlign = 'left';
+            ctx.fillText(`LVL ${weaponLevel}: ${currentWeapon.name}`, weaponX + 5, weaponY + 18);
+            ctx.fillText(`HASAR: ${currentWeapon.damage}`, weaponX + 5, weaponY + 38);
+            ctx.fillText(`AT. HIZI: ${currentWeapon.rate < 200 ? 'Hızlı' : (currentWeapon.rate < 600 ? 'Orta' : 'Yavaş')}`, weaponX + 130, weaponY + 38);
+            
+            // Yükseltme Durumu
+            const nextWeaponIndex = weaponLevel;
+            const upgradeY = weaponY + 40;
+            
+            if (nextWeaponIndex < WEAPONS.length) {
+                const nextWeapon = WEAPONS[nextWeaponIndex];
+                const canUpgrade = score >= nextWeapon.cost;
+                
+                ctx.fillStyle = canUpgrade ? 'rgba(52, 211, 153, 0.3)' : 'rgba(185, 28, 28, 0.3)'; // Kırmızı/Yeşil arka plan
+                ctx.fillRect(weaponX, upgradeY, weaponBoxWidth + 10, 25); 
+
+                ctx.fillStyle = canUpgrade ? '#34d399' : '#f87171'; // Yeşil/Kırmızı yazı
+                ctx.font = '12px Inter';
+                ctx.textAlign = 'center';
+                
+                const upgradeText = `YÜKSELT (E): ${nextWeapon.name} (${nextWeapon.cost} Puan)`;
+                ctx.fillText(upgradeText, weaponX + weaponBoxWidth / 2 + 5, upgradeY + 15);
+            } else {
+                ctx.fillStyle = 'rgba(5, 150, 105, 0.5)';
+                ctx.fillRect(weaponX, upgradeY, weaponBoxWidth + 10, 25);
+                ctx.fillStyle = '#059669';
+                ctx.font = '12px Inter';
+                ctx.textAlign = 'center';
+                ctx.fillText('MAKS SİLAH SEVİYESİ', weaponX + weaponBoxWidth / 2 + 5, upgradeY + 15);
+            }
+            
+            
+            // 6. Skill Barı (Sağ Alt) - Canvas Üzerine Çizim
+            const skillIconSize = 45;
+            const skillSpacing = 55; // 45 + 10 boşluk
+            const totalSkillWidth = (3 * skillIconSize) + (2 * 10); // 3 skill, 2 boşluk
+            const skillStartX = W - totalSkillWidth - 25; // Sağ kenardan 25px boşluk
+            const skillStartY = H - 60;
+            
+            // Q - Bomba
+            drawSkillIcon(skillStartX, skillStartY, bombs, 'Q', '💣', bombs <= 0);
+            // R - Can Doldurma
+            drawSkillIcon(skillStartX + skillSpacing, skillStartY, heals, 'R', '❤️', heals <= 0);
+            // F - Korku
+            drawSkillIcon(skillStartX + skillSpacing * 2, skillStartY, fears, 'F', '😱', fears <= 0);
+
+            // Text alignment'ı resetle
+            ctx.textAlign = 'left';
+        }
+
+
+        /**
+         * Ana oyun döngüsü.
+         */
+        function update(currentTime) {
+            if (isGameOver) {
+                clearInterval(spawnIntervalId);
+                return;
+            }
+
+            const deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+            gameTime += deltaTime;
+            player.damageTimer = Math.max(0, player.damageTimer - deltaTime);
+
+            if (gameTime >= difficultyLevel * DIFFICULTY_INTERVAL) {
+                increaseDifficulty();
+            }
+
+            movePlayer(deltaTime);
+
+            // Kamera takibi (Oyuncuyu ekranın merkezine sabitle)
+            cameraX = player.x - W / 2;
+            cameraY = player.y - H / 2;
+
+
+            // Ekranı temizle
+            ctx.fillStyle = 'rgba(15, 15, 28, 0.3)';
+            ctx.fillRect(0, 0, W, H);
+            
+            // --- Oyun Dünya Çizimine Başla ---
+            ctx.save();
+            ctx.translate(-cameraX, -cameraY); // Kamerayı uygula
+            
+            // 1. Otomatik ateş etme (eğer mouse basılıysa)
+            if (player.isShooting) {
+                shoot();
+            }
+
+            // 2. Loot Paketleri Güncelleme ve Çizme (GÜVENLİ TERS DÖNGÜ)
+            for (let i = lootItems.length - 1; i >= 0; i--) {
+                const loot = lootItems[i];
+                loot.draw();
+                // Oyuncu-Loot Çarpışması
+                const dist = Math.hypot(player.x - loot.x, player.y - loot.y);
+                if (dist - player.radius - loot.radius < 1) {
+                    collectLoot(loot, i); // Logiği çalıştır
+                    lootItems.splice(i, 1); // Güvenli silme
+                }
+            }
+
+
+            // 3. Mermileri güncelle (GÜVENLİ TERS DÖNGÜ)
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const bullet = bullets[i];
+                bullet.update(deltaTime); 
+
+                let hit = false;
+                
+                // Mermi-Zombi Çarpışması (GÜVENLİ TERS DÖNGÜ)
+                for (let j = enemies.length - 1; j >= 0; j--) {
+                    const enemy = enemies[j];
+                    const dist = Math.hypot(bullet.x - enemy.x, bullet.y - enemy.y);
+                    
+                    if (dist - bullet.radius - enemy.radius < 1) {
+                        enemy.health -= bullet.damage;
+                        hit = true;
+                        
+                        if (enemy.health <= 0) {
+                            // Enemy death logic
+                            score += ZOMBIE_SCORE_VALUE; 
+                            gainXP(ZOMBIE_XP_VALUE); 
+                            for (let k = 0; k < 15; k++) {
+                                particles.push(new Particle(enemy.x, enemy.y, 'lime'));
+                            }
+                            
+                            dropLoot(enemy.x, enemy.y);
+                            enemies.splice(j, 1); // Güvenli silme
+                        }
+                        break; // Mermi tek bir zombiye vurabilir
+                    }
+                }
+
+                // Mermi yok etme kontrolü
+                if (hit || Math.abs(bullet.x - player.x) > W || Math.abs(bullet.y - player.y) > H) {
+                    bullets.splice(i, 1); // Güvenli silme
+                    continue;
+                }
+                bullet.draw();
+            }
+
+            // 4. Düşmanları güncelle (Sadece pozisyon/durum güncellemesi)
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                // Eğer şok dalgasıyla öldürülmediyse stun/fear timer'larını güncelle
+                enemy.update(deltaTime); 
+
+                // Düşman-Oyuncu Çarpışması
+                const dist = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+                if (dist - player.radius - enemy.radius < 1) {
+                    if (player.damageTimer <= 0) {
+                        player.health -= 10; 
+                        player.damageTimer = player.damageCooldown; 
+                        
+                        if (player.health <= 0) {
+                            isGameOver = true;
+                            saveScore(score);
+                            gameOverScreen();
+                            return;
+                        }
+                        // Zombiyi geri it
+                        const angle = Math.atan2(enemy.y - player.y, enemy.x - player.x);
+                        enemy.x += Math.cos(angle) * 30;
+                        enemy.y += Math.sin(angle) * 30;
+                    }
+                }
+
+                enemy.draw();
+            }
+            
+            // 5. Parçacıkları güncelle (GÜVENLİ TERS DÖNGÜ)
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const particle = particles[i];
+                if (particle.alpha <= 0) {
+                    particles.splice(i, 1); // Güvenli silme
+                } else {
+                    particle.update(deltaTime);
+                    particle.draw();
+                }
+            }
+
+            drawPlayer(); // Oyuncuyu diğer her şeyin üstüne çiz
+
+            ctx.restore(); // Kamera çevirisini geri al
+
+            // --- HUD Çizimine Başla ---
+            drawHUD();
+
+            updateUI(); // HTML elementlerini güncelle (Silah/Upgrade)
+            animationId = requestAnimationFrame(update);
+        }
+
+        /**
+         * Oyun bitti ekranını gösterir.
+         */
+        function gameOverScreen() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+            ctx.fillRect(0, 0, W, H);
+            ctx.fillStyle = 'red';
+            ctx.font = '60px Inter';
+            ctx.textAlign = 'center';
+            ctx.fillText('OYUN BİTTİ!', W / 2, H / 2 - 60);
+            ctx.fillStyle = 'white';
+            ctx.font = '30px Inter';
+            ctx.fillText(`Skorunuz: ${score}`, W / 2, H / 2);
+            ctx.font = '24px Inter';
+            ctx.fillText(`Ulaştığınız Seviye: ${playerLevel}`, W / 2, H / 2 + 40);
+            startButton.textContent = "Tekrar Oyna";
+            startButton.disabled = false;
+        }
+
+
+        // --- ETKİNLİK DİNLEYİCİLERİ ---
+
+        // Mouse hareketini izle (Nişan alma)
+        canvas.addEventListener('mousemove', (event) => {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+
+            // Target X ve Y ekran koordinatlarıdır (HUD çizimi için)
+            player.targetX = (event.clientX - rect.left) * scaleX;
+            player.targetY = (event.clientY - rect.top) * scaleY;
+        });
+
+        // Mouse basma/bırakma (Ateş etme)
+        canvas.addEventListener('mousedown', () => {
+            if (!isGameOver) player.isShooting = true;
+        });
+        canvas.addEventListener('mouseup', () => {
+            player.isShooting = false;
+        });
+        
+        // Klavye olayları (Hareket ve Skiller)
+        document.addEventListener('keydown', (event) => {
+            const key = event.key.toLowerCase();
+
+            // WASD/Shift'in tarayıcıda scroll yapmasını engeller
+            if (['w', 'a', 's', 'd', 'q', 'r', 'f', 'e', 'shift'].includes(key)) {
+                event.preventDefault(); 
+            }
+            
+            keys[key] = true;
+            
+            if (isGameOver) return;
+            
+            if (key === 'q') {
+                useBomb();
+            } else if (key === 'r') {
+                useHeal();
+            } else if (key === 'f') { 
+                useFear();
+            } else if (key === 'e') {
+                upgradeWeapon();
+            }
+        });
+
+        document.addEventListener('keyup', (event) => {
+            keys[event.key.toLowerCase()] = false;
+        });
+        
+        // Buton Dinleyicileri (Sadece HTML Butonları Kaldı)
+        startButton.addEventListener('click', startGame);
+
+        // Pencere yüklendiğinde başlatma
+        window.onload = function () {
+            currentWeapon = WEAPONS[0];
+            updateUI(); 
+            
+            ctx.fillStyle = 'white';
+            ctx.font = '30px Inter';
+            ctx.textAlign = 'center';
+            ctx.fillText('BAŞLAMAK İÇİN TIKLA', W / 2, H / 2);
+            ctx.textAlign = 'left';
+            
+            // Skor listesini yükle (Mock data)
+            loadHighScores(); 
+        };
+
+        // --- OYUN MANTIĞI SONU ---
+    </script>
